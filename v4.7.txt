@@ -1,0 +1,459 @@
+// Coder: Enkeleid Hasko
+// DESCRIPTION: This program implement a WSA in order to find long/short patterns from U.S. stocks
+// DATE: Dec. 12, 2015
+// ENVIRONMENT: Ubuntu 14.04 LTS x64
+// IDE: Eclipse Mars v4.5.1
+
+import java.io.File;import java.io.FileInputStream;
+import java.io.FileOutputStream;
+//import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.xssf.usermodel.XSSFSheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import java.util.*;	// can use vectors now
+import java.text.*;		// used to truncate decimal digits
+
+
+class DataPoint
+{
+	String date;	// day of the stock
+	double Hval;	// stock's high value
+	double Lval;	// low value
+	int Rval;		// relative high/low, TBD during first pass
+	
+	// constructor
+	public DataPoint()
+	{
+		this.date = "";
+		this.Hval = -1.0;	
+		this.Lval = -1.0;	
+		this.Rval = -2;		
+	}	
+}
+
+public class ReadExcelDemo 
+{
+	
+	public static void main(String[] args) 
+	{
+//		String fileName = "aapl.xlsx";
+//		String fileName = "aapl_clean.xlsx";
+//		String fileName = "intel.xlsx";
+//		String fileName = "crude_oil.xlsx";
+//		String fileName = "microsoft.xlsx";
+		String fileName = "tesla.xlsx";
+		
+		// vector that holds a DataPoint class, which is a simple data structure that retains the date of the stock, its high/low values, and the relative high/low indices
+		Vector<DataPoint> DataPoints = new Vector<DataPoint>();	
+		
+		double prevHi, prevLow;
+//		double curHi = 100, curLow = 100;
+		double curHi, curLow;
+		double nextHi, nextLow;
+		
+		try
+		{
+			
+			FileInputStream file = new FileInputStream(new File(fileName));	// File input operations
+			XSSFWorkbook workbook = new XSSFWorkbook(file);					// Create Workbook instance holding reference to .xlsx file
+			XSSFSheet sheet = workbook.getSheetAt(0);						// Get desired sheet from the workbook
+			Iterator<Row> rowIterator = sheet.iterator();					// Iterate through each rows one by one
+			Row row = rowIterator.next();		// skips first row since it contains the headers
+			
+			// the following populates the highs and lows vector
+			while (rowIterator.hasNext()) 
+			{
+				row = rowIterator.next();	
+				DataPoint temp = new DataPoint();					// new instance of DataPoint
+				temp.date = row.getCell(0).toString();
+				temp.Hval = row.getCell(2).getNumericCellValue();
+				temp.Lval = row.getCell(3).getNumericCellValue();
+				DataPoints.addElement(temp);						// inserting the DataPoint into the DataPoints vector
+			}
+			
+			// creating additional header fields
+			sheet.getRow(0).createCell(7).setCellValue("Rel High/Low");
+			sheet.getRow(0).createCell(8).setCellValue("Enter/Exit");
+			sheet.getRow(0).createCell(9).setCellValue("Pattern");
+			
+//			System.exit(0);		// DEBUGGING
+			
+			//***********************************************************************************************************************
+			// FIRST PASS
+			// the following algorithm populates the highLow vector with -1, 0, 1, and 2, which will be written in the excel file
+			// I arbitrarily chose to make first and last elements in the highLow vector a blank (-1.0 will be later used as a flag to create blank cells)
+
+		      for(int i = 1; i < DataPoints.size()-1; ++ i)
+		      {
+		    	  // here previous, current, and next are used as visual aids		    	  
+		    	  prevLow = (double)DataPoints.get(i-1).Lval;
+		    	  curLow = (double)DataPoints.get(i).Lval;
+		    	  nextLow = (double)DataPoints.get(i+1).Lval;		    	  
+		    	  
+		    	  prevHi = (double)DataPoints.get(i-1).Hval;
+		    	  curHi = (double)DataPoints.get(i).Hval;
+		    	  nextHi = (double)DataPoints.get(i+1).Hval;
+		    	  
+		    	  Boolean isRelHi = (prevHi <= curHi && curHi >= nextHi);			// returns true if relative high
+		    	  Boolean isRelLow = (prevLow >= curLow && curLow <= nextLow);	// returns true if relative low
+		    	  
+		    	  if(!isRelHi && isRelLow) { DataPoints.get(i).Rval = 0; }		// not relative high but relative low => write a 0
+		    	  if(isRelHi && !isRelLow) { DataPoints.get(i).Rval = 1; }		// relative high but not relative low => write a 1
+		    	  if(isRelHi && isRelLow) { DataPoints.get(i).Rval = 2; }		// relative high and low => write a 2
+		    	  if(!isRelHi && !isRelLow) { DataPoints.get(i).Rval = -1; }		// neither => will use a -1 to leave the cell blank
+		      }
+		      
+		      
+		    //***********************************************************************************************************************
+		      // SECOND PASS - used to resolve 2s
+		      for(int i = 1; i < DataPoints.size()-1; ++i)	// scans all data points
+		      {
+		    	  int cur = DataPoints.get(i).Rval;
+		    	// RESOLVING FIRST TYPE OF ANOMALY: GETTING RID OF 2s
+	    		  if(cur == 2)
+	    		  {
+	    			  int offset = 2;		// offset starts at 2 since the data point immediately before and after a 2 are blanks
+	    			  Boolean isZero = false;
+	    			  Boolean isOne = false;
+	    			  Boolean isBlank = false;
+	    			  
+	    			  while(!isOne || !isZero || !isBlank)		// continue until 2 is resolved into either a 0, a 1, or a blank
+	    			  {
+	    				  if(offset < 0) { break; }	// stop if we go out of bounds of highLow vector
+
+	    				  // high/low pairs of preceding, current, and following data points; they are used as visual aids
+	    				  prevHi = DataPoints.get(i-offset).Hval;
+	    				  prevLow = DataPoints.get(i-offset).Lval;
+	    				  curHi = DataPoints.get(i).Hval;
+	    				  curLow = DataPoints.get(i).Lval;
+				    	  
+	    				  if((prevHi > curHi) && (prevLow > curLow))
+	    				  {
+	    					  DataPoints.get(i).Rval = 0;	// 2 is replaced with 0
+	    					  break;
+	    				  }
+	    				  if((prevLow < curLow) && (prevHi < curHi))
+	    				  {
+	    					  DataPoints.get(i).Rval = 1;	// 2 is replaced with 1
+	    					  break;
+	    				  }
+	    				  if((prevHi > curHi) && (prevLow < curLow))
+	    				  {
+	    					  DataPoints.get(i).Rval = -1;	// 2 is replaced with -1.0 which is used as a flag for blanks
+	    					  break;
+	    				  }
+	    				  ++offset;
+	    			  }
+	    		  }
+		      }
+		      
+		      
+		   // FOR DEBUGGING PURPOSES - After Resolving type 1 anomaly I print the relative values on the 14th excel column
+//		      for(int i = 0; i < DataPoints.size()-1; ++i)
+//		      {
+//	    		  if(DataPoints.get(i).Rval != -1) { sheet.getRow(i+1).createCell(14).setCellValue(DataPoints.get(i).Rval); } // writes a 0 or a 1
+//	    		  else { sheet.getRow(i+1).createCell(14); }									// neither case - leaves cell blank
+//		      }
+		      		
+		      
+		      int j;
+		      //*******************************************CYCLYING REMOVAL OF TYPE 2 AND 3 ANOMALIES UNTIL NO CHANGES ARE DETECTED*******************************************
+		   // current and next refer to Rval (relative highs/lows)
+		      int current;
+		      int next;
+		      Boolean change = true;
+		      while(change)
+		      {
+		    	  change = false;	// if no anomalies are detected, chage will remain false and the while loop will terminate
+			    //***********************************************************************************************************************
+			    // THIRD PASS - Resolves type 2 anomaly			      
+			      for(int i = 1; i < DataPoints.size()-1; ++i)
+			      {
+			    	  j = i+1;		// used to track next
+			    	  current = DataPoints.get(i).Rval;			// current data point
+			    	  next = DataPoints.get(j).Rval;
+			    	  
+			    	  if(current == -1.0) { continue; }			// if current is blank move on to next data point
+			    	  else				// current is either a 0 or a 1
+			    	  {
+			    		  while(j < DataPoints.size()-1)	// keep looking until you reach end of vector
+			    		  {			    			  
+			    			  if((current == 0 && next == 1) || (current == 1 && next == 0)) { break; }	// no anomaly detected
+			    			  // NOTE: for some odd reason cur will never be equal to next, so I cannot compare them with each other directly
+			    			  if(current == 0 && next == 0)	// anomaly detected: current is a relative low and the following value is a relative low as well (current stays fixed here)
+			    			  {
+			    				  change = true;    				  
+			    				  if(DataPoints.get(i).Lval <= DataPoints.get(j).Lval)	{ DataPoints.get(j).Rval = -1; }// if current low is smaller than or equal to the following low
+			    				  else { DataPoints.get(i).Rval = -1; } 		// replace following relative low with a -1.0, which is used to print blank cells
+			    			  }
+			    			  
+			    			  if(current == 1 && next == 1)		// anomaly detected: current is a relative high followed by another relative high
+			    			  {
+			    				  change = true;
+			    				  if(DataPoints.get(i).Hval <= DataPoints.get(j).Hval) { DataPoints.get(i).Rval = -1; }	// if current high is smaller than or equal to the following high:
+			    				  else { DataPoints.get(j).Rval = -1; } // replace following relative high with a -1.0, which is used to print blank cells
+			    			  }	
+			    			  next = DataPoints.get(++j).Rval;		// increase indexer as well as data points referenced by current and next
+			    		  }
+			    	  }
+			      }
+			      
+			    //***********************************************************************************************************************
+			    // FOURTH PASS - Removing type 3 anomalies
+			      for(int i = 0; i < DataPoints.size()-1; ++i)
+			      {
+			    	  j = i+1;		// used to track next
+			    	  current = DataPoints.get(i).Rval;			// current data point
+			    	  next = DataPoints.get(j).Rval;
+			    	  
+			    	  if(current == -1.0) { continue; }			// if current is blank move on to next data point
+			    	  else				// current is either a 0 or a 1
+			    	  {
+			    		  while(j < DataPoints.size()-1)	// keep looking until you reach end of vector
+			    		  {
+			    			  // I only expect to encounter consecutive ones and zeroes after the 3rd pass
+			    			  if(current == 1 && next == 0)
+			    			  {
+			    				  if((DataPoints.get(i).Hval < DataPoints.get(j).Lval))		// anomaly detected: relative high followed by greater relative low
+			    				  {
+			    					  change = true;
+			    					  DataPoints.get(j).Rval = -1;	// remove relative low
+				    				  break;
+			    				  }
+			    				  else { break; }	// no anomaly detected		    				  
+			    			  }
+			    			  
+			    			  if(current == 0 && next == 1)
+			    			  {
+			    				  if(DataPoints.get(i).Lval > DataPoints.get(j).Hval)		// anomaly detected: relative low followed by smaller relative high
+			    				  {
+			    					  change = true;
+			    					  DataPoints.get(j).Rval = -1;	// remove relative high
+				    				  break;
+			    				  }
+			    				  else { break; }
+			    			  }
+			    			  next = DataPoints.get(++j).Rval;
+			    		  }
+			    	  }  
+			      }
+		      }
+		      
+		      
+		    //***********************************************************************************************************************
+		      // PATTERN DETECTOR - this system finds a pattern and immediately tries to apply it to a trade
+		      double[]  pattern = new double[4];	// will hold relative highs/lows pattern (either a 0-1-0-1 or a 0-1-0-1)
+		      int  k;	// pattern indexer
+		      double sl, tp, ep, pgl;
+		      double newHigh;
+		      double newLow;
+		      boolean enter;
+		      int wins = 0;
+    		  int losses = 0;
+    		  double pgl_win_sum = 0;
+    		  double pgl_lose_sum = 0;
+    		  int trade_days = 0;
+    		  int l;	// l is the trade enter offset: we enter 2 days after a long pattern is discovered
+    		  int n;
+    		  int pattern_index;
+		      
+		      for(int i = 1; i < DataPoints.size()-1; ++i)	// scans all data points
+		      {
+		    	  k = 0;	// reset k
+		    	  j = i;	
+//		    	  System.out.println("i =  " + i);		// DEBUGGING
+		    	  
+		    	  // the following looks for first 4 non-blank values
+		    	  // I need to skip all blanks, otherwise the same pattern will be repeated n + 1 times (if there are n blanks right after i)
+		    	  if(DataPoints.get(j).Rval != -1)	// SKIP BLANKS
+		    	  {
+		    		  // fill up pattern array
+		    		  while((k < 4) && (j < DataPoints.size() - 1))	// continue until pattern array has 4 values or we reach end of highLow vector
+			    	  {
+	//		    		  System.out.println("j =  " + j);		// DEBUGGING
+		    			  
+		    			  if(DataPoints.get(j).Rval == 0) { pattern[k++] = DataPoints.get(j).Lval; }
+		    			  if(DataPoints.get(j).Rval == 1) { pattern[k++] = DataPoints.get(j).Hval; }
+			    		  ++j;	// continue looking until a non blank value is found, which will be inserted into pattern array
+			    	  }
+			    	  
+			    	// breaking mechanism when filling out the very last pattern array: it is not guaranteed that it fill be filled up
+		    		  if(j == DataPoints.size()-2) { break; }	// break at DataPoints.size()-2 since I have to compute j + l at a later time
+			    	  
+	//		    	  System.out.println("pattern content is: " + pattern[0] +  " " + pattern[1] + " " + pattern[2] + " " + pattern[3]);		// FOR DEBUGGING PURPOSES
+			    	  
+		    		  
+//		    		  if(counter == 20) { System.exit(1); } // DEBUGGING
+		    		  
+		    		  // LONG PATTERN 
+			    	  if(pattern[0] <= pattern[2] && pattern[1] <= pattern[3])
+			    	  {
+//			    		  System.out.println("Long pattern found at row " + (j+1) + ":");		// DEBUGGING
+//			    		  System.out.println(pattern[0] +  " <= " + pattern[2] + " and " + pattern[1] + " <= " + pattern[3]);		// DEBUGGING
+			    		  
+			    		  if(pattern[0] > pattern[1]) { sl = pattern[1]; tp = pattern[2]; }		// long pattern of type 1-0-1-0
+			    		  else { sl = pattern[0]; tp = pattern[3]; }							// long pattern of type 0-1-0-1
+			    		  
+			    		  ep = (sl + tp)/2;
+			    		  pgl = ((Math.abs(ep - sl))/ep)*100;
+			    		  sheet.getRow(j).createCell(9).setCellValue("long on " + DataPoints.get(j-1).date + "; t.p.=" + tp + ", e.p.=" + new DecimalFormat("#0.0000").format(ep) + " s.l.=" + sl + ", p.g.l.=" + new DecimalFormat("#0.0000").format(pgl) + "%");
+			    		  System.out.println("long on " + DataPoints.get(j-1).date + "; t.p.=" + tp + ", e.p.=" + new DecimalFormat("#0.0000").format(ep) + " s.l.=" + sl + ", p.g.l.=" + new DecimalFormat("#0.0000").format(pgl) + "%");
+			    		  
+			    		  // APPLYING THE PATTERN FOUND - pattern is applied 2 days after it is found
+			    		  l = 2;	// l is the trade enter offset: we enter 2 days after a long pattern is discovered
+			    		  n = j-1+l;
+			    		  
+			    		  if(n > DataPoints.size() -1) { break; } // we reached the end of the vector
+			    			  
+//			    		  System.out.println("n = " + n);	// DEBUGGING
+			    		  // NOW WE ARE 2 DAYS AFTER THE DETECTION OF THE PATTERN, READY TO DETERMINE WHETHER WE CAN ENTER A TRADE (j-1+l)
+		    			  newHigh = DataPoints.get(n).Hval;
+			    		  newLow = DataPoints.get(n).Lval;
+			    		  
+			    		  // the following computes the entering condition or when we can enter a trade; the entry point (ep) only matters when entering a trade
+			    		  enter = (tp > newHigh) && (newHigh >= ep) && (ep >= newLow) && (newLow > sl);		
+			    		  
+			    		  // IF ENTERING CONDITION IS NOT MET RIGHT ON THE 2nd DAY AFTER A PATTERN IS DISCOVERED:
+			    		  // WE HAVE TO KEEP LOOKING FOR AN ENTERING DAY UNLESS take profit (tp) OR stop loss (sl) ARE HIT BEFORE ENTERING THE TRADE, 
+			    		  // IN WHICH CASE WE DISCARD THE PATTERN AND MOVE ON TO THE NEXT PATTERN
+			    		  String str;	// holds trade enter info
+			    		  
+			    		  if((newHigh >= tp) || (newLow <= sl)) { continue; } 	// discard trade: we reach tp or sl before we can even enter the trade
+		    			  else		// no need to discard yet
+		    			  {
+		    				  if(enter)		// entering the trade; once entered, the only way to exit is either a winner or a loser - ATTENTION: case for when we break both tp and sl not yet accounted for
+			    			  {
+		    					  pattern_index = n;
+//			    				  sheet.getRow(n+1).createCell(16).setCellValue("Applying pattern at " + (pattern_index) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval); 
+			    				  System.out.println("Applying pattern from " + (pattern_index) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval);
+			    				  str = "Applying pattern from " + (pattern_index) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval;
+			    				  while(n < DataPoints.size()-3)	// stay in until either a winner or a loser - ATTENTION: case for when we break both tp and sl not yet accounted for
+			    				  {
+			    					  ++trade_days;
+			    					  ++n;		// go to next day and recompute the new high and new low values
+					    			  newHigh = DataPoints.get(n).Hval;
+					    			  newLow = DataPoints.get(n).Lval;
+			    					  if(newHigh >= tp)	// WIN CASE, exit trade and look for next pattern
+					    			  {
+					    				  // print stuff
+//					    				  sheet.getRow(n+1).createCell(17).setCellValue("Exit a winner, pattern at " + (pattern_index) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval);
+			    						  sheet.getRow(pattern_index+1).createCell(8).setCellValue(str + "; Exit a winner, pattern at " + (pattern_index) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval);
+					    				  System.out.println("nH=" + DataPoints.get(n).Hval + " >= tp=" + tp);
+					    				  System.out.println("Exit a winner, pattern at " + (pattern_index) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval);
+					    				  ++wins;
+					    				  pgl_win_sum += pgl;
+					    				  break;
+					    			  }
+					    			  if(newLow <= sl)	// LOSE CASE
+					    			  {
+					    				  // print stuff
+					    				  sheet.getRow(pattern_index+1).createCell(8).setCellValue(str + "; Exit a loser, pattern at " + (pattern_index) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval);
+					    				  System.out.println("nL=" + DataPoints.get(n).Lval + " <= sl=" + sl);
+					    				  System.out.println("Exit a loser, pattern at " + (pattern_index) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval);
+					    				  ++losses;
+					    				  pgl_lose_sum += pgl;
+					    				  break;
+					    			  }
+			    				  }
+			    			  }
+		    				  else		// cannot not enter the trade yet
+		    				  {
+		    					  while(!enter && n < DataPoints.size()-3)	// keep looking until you meet entering condition or reach the end of the vector
+			    				  {
+			    					  ++n;		// go to next day and recompute the new high and new low values
+					    			  newHigh = DataPoints.get(n).Hval;
+					    			  newLow = DataPoints.get(n).Lval;
+					    			  enter = (tp > newHigh) && (newHigh >= ep) && (ep >= newLow) && (newLow > sl);
+					    			  
+					    			  if((newHigh >= tp) || (newLow <= sl)) { break; }
+					    			  
+					    			  if(enter)
+					    			  {
+					    				  pattern_index = n;
+//					    				  sheet.getRow(n+1).createCell(16).setCellValue("Applying pattern at " + (pattern_index) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval); 
+					    				  System.out.println("Applying pattern from " + (j+1) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval);
+					    				  str = "Applying pattern from " + (j+1) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval;
+					    				  while(n < DataPoints.size()-3)	// stay in until either a winner or a loser - ATTENTION: case for when we break both tp and sl not yet accounted for
+					    				  {
+					    					  ++trade_days;
+					    					  ++n;		// go to next day and recompute the new high and new low values
+							    			  newHigh = DataPoints.get(n).Hval;
+							    			  newLow = DataPoints.get(n).Lval;
+					    					  if(newHigh >= tp)	// WIN CASE, exit trade and look for next pattern
+							    			  {
+							    				  // print stuff
+							    				  sheet.getRow(pattern_index+1).createCell(8).setCellValue(str + "; Exit a winner, pattern at " + (j+1) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval);
+							    				  System.out.println("nH=" + DataPoints.get(n).Hval + " >= tp=" + tp);
+							    				  System.out.println("Exit a winner, pattern at " + (j+1) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval);
+							    				  ++wins;
+							    				  pgl_win_sum += pgl;
+							    				  break;
+							    			  }
+							    			  if(newLow <= sl)	// LOSE CASE
+							    			  {
+							    				  // print stuff
+							    				  sheet.getRow(pattern_index+1).createCell(8).setCellValue(str + "; Exit a loser, pattern at " + (j+1) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval);
+							    				  System.out.println("nL=" + DataPoints.get(n).Lval + " <= sl=" + sl);
+							    				  System.out.println("Exit a loser, pattern at " + (j+1) + " on " + DataPoints.get(n).date + ", nH=" + DataPoints.get(n).Hval + ", nL=" + DataPoints.get(n).Lval);
+							    				  ++losses;
+							    				  pgl_lose_sum += pgl;
+							    				  break;
+							    			  }
+					    				  }
+					    			  }
+			    				  }
+		    				  }
+		    			  }
+			    	  }
+			    	  
+			    	  // SHORT PATTERN
+//			    	  if(pattern[0] >= pattern[2] && pattern[1] >= pattern[3])
+//			    	  {
+////			    		  System.out.println("Short pattern found at row " + (j+1) + ":");		// DEBUGGING
+////			    		  System.out.println(pattern[0] +  " >= " + pattern[2] + " and " + pattern[1] + " >= " + pattern[3]);		// DEBUGGING
+//			    		  
+//			    		  if(pattern[0] > pattern[1]) { sl = pattern[0]; tp = pattern[3]; }
+//			    		  else { sl = pattern[1]; tp = pattern[2]; }
+//
+//			    		  ep = (sl + tp)/2;
+//			    		  pgl = ((Math.abs(ep - sl))/ep)*100;
+////			    		  sheet.getRow(j).createCell(16).setCellValue("short; s.l.=" + sl + ", t.p.=" + tp + ", e.p.=" + new DecimalFormat("#0.0000").format(ep) + ", p.g.l.=" + new DecimalFormat("#0.0000").format(pgl) + "%");
+//			    	  }
+		    	  }
+		    		  
+		      }
+		    	  
+		      // PRINTS THE FINAL SMOOTH SEQUENCE OF RELATIVE HIGHS/LOWS
+		      for(int i = 0; i < DataPoints.size()-1; ++i)
+		      {
+	    		  if(DataPoints.get(i).Rval != -1) { sheet.getRow(i+1).createCell(7).setCellValue(DataPoints.get(i).Rval); } // writes a 0 or a 1
+	    		  else { sheet.getRow(i+1).createCell(7); }	// neither case - leaves cell blank
+		      }
+		      
+		      System.out.println("Wins: " + wins);
+		      System.out.println("Losses: " + losses);
+		      
+		      sheet.createRow(DataPoints.size()+6).createCell(0).setCellValue("Wins: " + wins);
+		      sheet.createRow(DataPoints.size()+7).createCell(0).setCellValue("Losses: " + losses);
+		      sheet.createRow(DataPoints.size()+8).createCell(0).setCellValue("Wins are " + new DecimalFormat("#0.00").format((wins/(double)(wins+losses))*100) + "% of bets");
+		      sheet.createRow(DataPoints.size()+9).createCell(0).setCellValue("The average trade length is " + new DecimalFormat("#0.00").format(trade_days/(double)(wins+losses)) + " days");
+		      sheet.createRow(DataPoints.size()+10).createCell(0).setCellValue("The average percentage gain is " + new DecimalFormat("#0.00").format(pgl_win_sum/(double)(wins)));
+		      sheet.createRow(DataPoints.size()+11).createCell(0).setCellValue("The average percentage loss is " + new DecimalFormat("#0.00").format(pgl_lose_sum/(double)(losses)));
+		      
+		      
+		      
+//			  FileOutputStream fileOut = new FileOutputStream("aapl_Dec_13_complete_correctly_applies_patterns.xlsx");
+//		      FileOutputStream fileOut = new FileOutputStream("aapl_clean_Dec_13_complete_correctly_applies_patterns.xlsx");
+//		      FileOutputStream fileOut = new FileOutputStream("intel_Dec_13_complete_correctly_applies_patterns.xlsx");
+//		      FileOutputStream fileOut = new FileOutputStream("crude_oil_Dec_13_complete_correctly_applies_patterns.xlsx");
+//		      FileOutputStream fileOut = new FileOutputStream("microsoft_Dec_13_complete_correctly_applies_patterns.xlsx");
+		      FileOutputStream fileOut = new FileOutputStream("tesla_Dec_13_complete_correctly_applies_patterns.xlsx");
+		    workbook.write(fileOut);
+		    fileOut.close();
+		    file.close();
+		} 
+		catch (Exception e) { e.printStackTrace(); }
+	}
+}
+
+
